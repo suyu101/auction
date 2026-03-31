@@ -13,6 +13,7 @@ import { MyBidsProvider } from './live/context/MyBidsContext';
 import { NotificationProvider } from './live/context/NotificationContext'
 import PageTransition               from '@/components/layout/PageTransition';      
 import { AuthProvider } from './live/context/AuthContext'
+import { Suspense } from 'react'
 
 const inter = Inter({
   subsets:  ['latin'],
@@ -82,9 +83,11 @@ export default function RootLayout({
                   display:       'flex',
                   flexDirection: 'column',
                 }}>
+                  <Suspense fallback = {null}>
                   <PageTransition>
                     {children}
                   </PageTransition>
+                  </Suspense>
                 </main>
               </div>
 
