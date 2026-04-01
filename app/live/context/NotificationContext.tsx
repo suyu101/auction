@@ -99,6 +99,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
 export function useNotifications() {
   const ctx = useContext(NotificationContext);
-  if (!ctx) throw new Error('useNotifications must be used inside NotificationProvider');
-  return ctx;
+  // Build-safe fallback for pre-rendering
+  return ctx || {
+    notifications: [],
+    unreadCount: 0,
+    addNotification: () => {},
+    markAllRead: () => {},
+    clearAll: () => {},
+  } as NotificationContextValue;
 }

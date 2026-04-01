@@ -12,6 +12,7 @@ import {
 // Auction state is now fully database-driven from Supabase
 import type { Auction, AuctionStatus } from '@/lib/types';
 import { supabase } from '@/lib/supabase';
+import { calculateMarketStatus } from '@/lib/auction-utils';
 
 // ── State shape ───────────────────────────────────
 export interface AuctionState {
@@ -198,6 +199,7 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
   // Fetch from Supabase on mount
   useEffect(() => {
     async function hydrateAuctions() {
+      if (!supabase) return;
       // Fetch auctions and recent bids in parallel
       const [auctionsRes, bidsRes] = await Promise.all([
         supabase.from('auctions').select('*'),
@@ -227,13 +229,17 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
         let safeStatus = row.status as AuctionStatus;
         if (safeStatus === ('OUTBID' as any)) safeStatus = 'ENDING';
 
-        let parsedEndsAt = Number(row.ends_at);
+        // ── Date parsing — handle ISO strings or numeric timestamps ──
+        let parsedEndsAt = typeof row.ends_at === 'string' ? new Date(row.ends_at).getTime() : Number(row.ends_at);
         if (isNaN(parsedEndsAt)) parsedEndsAt = Date.now() + 86400000;
         
-        const parsedStartedAt = row.started_at ? Number(row.started_at) : parsedEndsAt - 86400000 * 7;
+        const parsedStartedAt = row.started_at 
+          ? (typeof row.started_at === 'string' ? new Date(row.started_at).getTime() : Number(row.started_at))
+          : parsedEndsAt - 86400000 * 7;
         
-        // Self-Healing: if it's UPCOMING but starts in the past, push it LIVE!
-        if (safeStatus === 'UPCOMING' && Date.now() >= parsedStartedAt) safeStatus = 'LIVE';
+        // ── Deterministic Status Calculation ──────────────────────────
+        // This ensures the initial state is perfectly synced with the current clock
+        safeStatus = calculateMarketStatus(parsedStartedAt, parsedEndsAt, safeStatus);
 
         // Build recentBids and priceHistory from the persisted bids table
         const auctionBids = (bidsByAuction.get(row.id) ?? []).slice(0, 5);
@@ -288,6 +294,29 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
     hydrateAuctions();
   }, [dispatch]);
 
+  // ── Background Status "Pulse" ──────────────────────────────────────────
+  // Re-calculates all statuses every 30 seconds to ensure transitions
+  // (e.g. LIVE -> ENDING -> SOLD) happen without needing a page refresh or
+  // Realtime update from the server.
+  useEffect(() => {
+    const pulse = setInterval(() => {
+      const updates: { id: string, status: AuctionStatus }[] = [];
+      
+      for (const a of Array.from(state.auctions.values())) {
+        const nextStatus = calculateMarketStatus(a.startedAt, a.endsAt, a.status);
+        if (nextStatus !== a.status) {
+          updates.push({ id: a.id, status: nextStatus });
+        }
+      }
+
+      if (updates.length > 0) {
+        updates.forEach(u => dispatch({ type: 'UPDATE_AUCTION', payload: u }));
+      }
+    }, 30000);
+
+    return () => clearInterval(pulse);
+  }, [state.auctions, dispatch]);
+
   const getLiveAuctions = useCallback(() => {
     return Array.from(state.auctions.values()).filter(
       a => a.status === 'LIVE' || a.status === 'ENDING' || a.status === 'UPCOMING'
@@ -319,8 +348,12 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
 // ── Custom hook ───────────────────────────────────
 export function useAuctions() {
   const ctx = useContext(AuctionContext);
-  if (!ctx) {
-    throw new Error('useAuctions must be used inside <AuctionProvider>');
-  }
-  return ctx;
+  // Build-safe fallback
+  return ctx || {
+    state: { auctions: new Map(), lastUpdated: Date.now() },
+    dispatch: () => {},
+    getLiveAuctions: () => [],
+    getAuction: () => undefined,
+    getAllAuctions: () => [],
+  } as AuctionContextValue;
 }

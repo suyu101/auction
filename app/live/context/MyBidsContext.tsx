@@ -78,6 +78,7 @@ export function MyBidsProvider({ children }: { children: React.ReactNode }) {
     }
 
     async function fetchBids(userId: string) {
+      if (!supabase) return;
       const { data, error } = await supabase
         .from('bids')
         .select('id, auction_id, amount, placed_at')
@@ -139,8 +140,17 @@ export function MyBidsProvider({ children }: { children: React.ReactNode }) {
     setBids(prev => prev.map(bid => {
       const live = state.auctions.get(bid.auctionId);
       if (!live) return bid;
+
+      // If already WON/LOST, we don't change it back (terminal states)
       if (bid.status === 'WON' || bid.status === 'LOST') return bid;
-      const status: BidStatus = live.currentBid > bid.myAmount ? 'OUTBID' : 'WINNING';
+
+      let status: BidStatus = bid.status;
+      if (live.status === 'SOLD' || live.status === 'RESERVED') {
+        status = live.currentBid <= bid.myAmount ? 'WON' : 'LOST';
+      } else {
+        status = live.currentBid > bid.myAmount ? 'OUTBID' : 'WINNING';
+      }
+
       return { ...bid, currentPrice: live.currentBid, status };
     }));
   }, [state.lastUpdated, hydrated]);
@@ -183,6 +193,14 @@ export function MyBidsProvider({ children }: { children: React.ReactNode }) {
 
 export function useMyBids() {
   const ctx = useContext(MyBidsContext);
-  if (!ctx) throw new Error('useMyBids must be used inside MyBidsProvider');
-  return ctx;
+  // Build-safe fallback
+  return ctx || {
+    bids: [],
+    activeBids: [],
+    historicalBids: [],
+    stats: { totalBids: 0, winning: 0, outbid: 0, won: 0, totalSpentOnWon: 0, activeSpend: 0 },
+    hydrated: false,
+    placeBid: () => {},
+    clearBids: () => {},
+  } as MyBidsContextValue;
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/app/live/context/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { calculateMarketStatus } from '@/lib/auction-utils';
 
 // ── Types ─────────────────────────────────────────
 interface AdminUser {
@@ -23,7 +24,8 @@ interface AdminAuction {
   current_bid: number;
   bid_count:   number;
   status:      string;
-  ends_at:     number;
+  started_at:  string | null;
+  ends_at:     string | null;
   seller_id:   string | null;
 }
 
@@ -51,11 +53,13 @@ const STATUS_COLORS: Record<string, string> = {
   RESERVED: 'var(--accent-red)',
 };
 
-function formatPrice(n: number) {
+function formatPrice(n: number | null | undefined) {
+  if (n === null || n === undefined) return '0.00';
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function formatDate(s: string) {
+function formatDate(s: string | null | undefined) {
+  if (!s) return '—';
   return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
@@ -109,7 +113,8 @@ function AccessDenied({ role }: { role: string }) {
 //  ADMIN PAGE
 // ══════════════════════════════════════════════════
 export default function AdminPage() {
-  const { user, profile, loading } = useAuth();
+  const authContext                 = useAuth();
+  const { user, profile, loading } = authContext || { user: null, profile: null, loading: true };
   const router                     = useRouter();
 
   const [tab,             setTab]             = useState<Tab>('stats');
@@ -122,13 +127,18 @@ export default function AdminPage() {
 
   // ── Fetch all data ────────────────────────────
   async function fetchAll() {
+    if (!supabase) return;
     setFetching(true);
 
     const [usersRes, auctionsRes, bidsRes] = await Promise.all([
       supabase.from('users').select('*').order('created_at', { ascending: false }),
-      supabase.from('auctions').select('id, title, category, current_bid, bid_count, status, ends_at, seller_id').order('ends_at', { ascending: true }),
+      supabase.from('auctions').select('*').order('ends_at', { ascending: true }),
       supabase.from('bids').select('amount', { count: 'exact' }),
     ]);
+
+    if (usersRes.error)    console.error('Admin Users Error:', usersRes.error);
+    if (auctionsRes.error) console.error('Admin Auctions Error:', auctionsRes.error);
+    if (bidsRes.error)     console.error('Admin Bids Error:', bidsRes.error);
 
     const usersData    = usersRes.data    ?? [];
     const rawAuctionsData = auctionsRes.data ?? [];
@@ -136,7 +146,10 @@ export default function AdminPage() {
     // Scrub historical database states that were permanently stored as 'OUTBID'
     const auctionsData = rawAuctionsData.map((a: any) => ({
       ...a,
-      status: a.status === 'OUTBID' ? 'ENDING' : a.status
+      current_bid: a.current_bid ?? a.currentBid ?? 0,
+      bid_count:   a.bid_count   ?? a.bidCount   ?? 0,
+      status:      a.status === 'OUTBID' ? 'ENDING' : a.status,
+      // We'll calculate the true status at render-time for live reactivity
     }));
 
     const bidCount     = bidsRes.count    ?? 0;
@@ -162,6 +175,16 @@ export default function AdminPage() {
   }
 
   useEffect(() => { fetchAll(); }, [user]);
+  
+  // Re-trigger render every 30s to update the "calculateMarketStatus" outputs in the table
+  useEffect(() => {
+    const timer = setInterval(() => {
+      // We don't necessarily need to re-fetch from DB, 
+      // just forcing a state update is enough to re-run the render loop
+      setAuctions(prev => [...prev]);
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -540,8 +563,14 @@ export default function AdminPage() {
               LOADING AUCTIONS...
             </p>
           ) : auctions.map(a => {
-            const statusColor = STATUS_COLORS[a.status] ?? 'var(--text-tertiary)';
-            const canClose    = a.status === 'LIVE' || a.status === 'ENDING' || a.status === 'UPCOMING';
+            // ── Dynamic Status Calculation ──────────────────────────
+            // Ensures the Admin view is perfectly synced with the real-time clock
+            const startsAt = a.started_at ? new Date(a.started_at).getTime() : Date.now();
+            const endsAt   = a.ends_at     ? new Date(a.ends_at).getTime()   : Date.now();
+            const currentStatus = calculateMarketStatus(startsAt, endsAt, a.status as any);
+
+            const statusColor = STATUS_COLORS[currentStatus] ?? 'var(--text-tertiary)';
+            const canClose    = currentStatus === 'LIVE' || currentStatus === 'ENDING' || currentStatus === 'UPCOMING';
             const isConfirming = confirmDeleteId === a.id;
 
             return (
@@ -597,7 +626,7 @@ export default function AdminPage() {
                       padding: '3px 8px', borderRadius: '3px',
                       fontSize: '9px', letterSpacing: '0.08em', fontWeight: 600,
                     }}>
-                      {a.status}
+                      {currentStatus}
                     </span>
                   </div>
 

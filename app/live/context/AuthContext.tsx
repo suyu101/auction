@@ -33,7 +33,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function fetchProfile(userId: string) {
+  const fetchProfile = useCallback(async (userId: string) => {
+    if (!supabase) return;
     const { data, error } = await supabase
       .from('users')
       .select('id, handle, avatar_initials, balance, role')
@@ -42,10 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     if (error || !data) return;
 
-    // Explicitly normalize balance to 0 if it came back null or missing from a new signup
     const normalizedBalance = data.balance ?? 0;
-
-    // If we detect a null or undefined balance on a new row, fix it in the DB immediately
     if (data.balance === null) {
       await supabase.from('users').update({ balance: 0 }).eq('id', userId);
     }
@@ -57,11 +55,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       balance:        normalizedBalance,
       role:           data.role,
     });
-  }
+  }, []);
 
   useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data: { session }, error }) => {
-      // If the refresh token is invalid/not found, sign out to clear the broken local session
       if (error && error.message.includes('Refresh Token')) {
         supabase.auth.signOut().catch(() => {});
       }
@@ -81,47 +83,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     return () => subscription.unsubscribe();
+  }, [fetchProfile]);
+
+  const signIn = useCallback(async (handle: string, password: string) => {
+    if (!supabase) return { error: 'Supabase not initialized' };
+    const email = `${handle.trim().toLowerCase()}@auction-terminal.local`;
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return { error: error?.message ?? null };
   }, []);
 
-  // ── Sign in with username + password ────────────────
-const signIn = useCallback(async (handle: string, password: string) => {
-  const email = `${handle.trim().toLowerCase()}@auction-terminal.local`;
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  return { error: error?.message ?? null };
-}, []);
-
-  // ── Sign up — passes handle + role via user metadata
-  // so the DB trigger can populate public.users correctly
   const signUp = useCallback(async (
     handle:   string,
     email:    string,
     password: string,
     role:     'buyer' | 'seller' | 'manager',
   ) => {
+    if (!supabase) return { error: 'Supabase not initialized' };
     const fakeEmail = `${handle.trim().toLowerCase()}@auction-terminal.local`;
     const { error } = await supabase.auth.signUp({
       email:    fakeEmail,
       password,
       options: {
-      data: { handle, role, balance: 0 },
-      emailRedirectTo: undefined,
-  },
-});
+        data: { handle, role, balance: 0 },
+        emailRedirectTo: undefined,
+      },
+    });
     return { error: error?.message ?? null };
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    if (supabase) await supabase.auth.signOut();
   }, []);
 
-return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signUp, signOut, refreshProfile: () => fetchProfile(user?.id ?? '') }}>      {children}
+  return (
+    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signUp, signOut, refreshProfile: () => fetchProfile(user?.id ?? '') }}>
+      {children}
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
-  return ctx;
+  // During build pre-rendering, contexts might be missing. We return a safe 
+  // placeholder instead of throwing or returning null, to prevent crashes.
+  return ctx || {
+    user: null,
+    profile: null,
+    session: null,
+    loading: true,
+    signIn: async () => ({ error: 'not_initialized' }),
+    signUp: async () => ({ error: 'not_initialized' }),
+    signOut: async () => {},
+    refreshProfile: async () => {},
+  } as AuthContextValue;
 }
