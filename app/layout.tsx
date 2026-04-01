@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
+import { Suspense } from 'react'
 import './globals.css'
 import TopBar from '@/components/layout/TopBar'
 import SideBar from '@/components/layout/SideBar'
@@ -13,6 +14,8 @@ import { MyBidsProvider } from './live/context/MyBidsContext';
 import { NotificationProvider } from './live/context/NotificationContext'
 import PageTransition               from '@/components/layout/PageTransition';      
 import { AuthProvider } from './live/context/AuthContext'
+
+export const dynamic = "force-dynamic"
 
 const inter = Inter({
   subsets:  ['latin'],
@@ -61,7 +64,7 @@ export default function RootLayout({
             <CommandPaletteProvider>                    {/* ← NEW wrapper */}
 
               {/* TopBar is sticky — stays at top as content scrolls */}
-              <TopBar />
+              <Suspense fallback={null}><TopBar /></Suspense>
               <SimulatorProvider />
 
               {/*
@@ -74,7 +77,7 @@ export default function RootLayout({
                 display:   'flex',
                 minHeight: 'calc(100vh - 76px)',
               }}>
-                <SideBar />
+                <Suspense fallback={null}><SideBar /></Suspense>
                 <main style={{
                   flex:          1,
                   overflow:      'hidden',
@@ -83,14 +86,16 @@ export default function RootLayout({
                   display:       'flex',
                   flexDirection: 'column',
                 }}>
-                  <PageTransition>
-                    {children}
-                  </PageTransition>
+                  <Suspense fallback={null}>
+                    <PageTransition>
+                      {children}
+                    </PageTransition>
+                  </Suspense>
                 </main>
               </div>
 
               <ToastContainer />
-              <CommandPalette />                        {/* ← NEW: portal-style, fixed position */}
+              <Suspense fallback={null}><CommandPalette /></Suspense>                        {/* ← NEW: portal-style, fixed position */}
 
             </CommandPaletteProvider>                   {/* ← NEW close */}
           </ToastProvider>
