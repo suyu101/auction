@@ -8,6 +8,7 @@ import { useWatchlist }       from '@/lib/hooks/useWatchlist';
 import { useNotifications }   from '@/app/live/context/NotificationContext';
 import { useMyBids }          from '@/app/live/context/MyBidsContext';
 import { useAuth }            from '@/app/live/context/AuthContext';
+import { calculateMarketStatus } from '@/lib/auction-utils';
 
 const BIDDER_HANDLES = [
   'usr_7x4k', 'usr_9m2p', 'usr_3r8q', 'usr_5t1n',
@@ -162,7 +163,7 @@ export function useSupabaseRealtime({
             title:         row.title,
             subtitle:      row.subtitle ?? 'Premium Auction Listing',
             category:      row.category,
-            status:        row.status,
+            status:        calculateMarketStatus(row.started_at ? new Date(row.started_at).getTime() : Date.now(), parsedEndsAt, row.status),
             currentBid:    row.current_bid,
             reservePrice:  row.current_bid,
             startingPrice: row.current_bid,
@@ -194,12 +195,17 @@ export function useSupabaseRealtime({
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'auctions' },
         ({ new: row }) => {
+          const auction = stateRef.current.auctions.get(row.id);
+          const nextStatus = auction 
+            ? calculateMarketStatus(auction.startedAt, auction.endsAt, row.status)
+            : row.status;
+
           // Sync any updates (like Admin force-close) directly into Context state
           dispatch({ 
             type: 'UPDATE_AUCTION', 
             payload: {
               id: row.id,
-              status: row.status,
+              status: nextStatus,
               currentBid: row.current_bid,
               title: row.title,
             } as any 

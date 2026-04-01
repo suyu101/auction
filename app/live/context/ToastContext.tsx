@@ -152,8 +152,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 // ── Custom hook ───────────────────────────────────
 export function useToast() {
   const ctx = useContext(ToastContext);
-  if (!ctx) {
-    throw new Error('useToast must be used inside <ToastProvider>');
-  }
-  return ctx;
+  // Build-safe fallback for pre-rendering
+  return ctx || {
+    toasts: [],
+    toast: () => {},
+    dismiss: () => {},
+    clear: () => {},
+    success: () => {},
+    error: () => {},
+    warning: () => {},
+    info: () => {},
+  } as ToastContextValue;
 }

@@ -51,8 +51,11 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
 
 export function useCommandPalette() {
   const ctx = useContext(CommandPaletteContext);
-  if (!ctx) {
-    throw new Error('useCommandPalette must be used inside <CommandPaletteProvider>');
-  }
-  return ctx;
+  // Build-safe fallback for pre-rendering
+  return ctx || {
+    isOpen: false,
+    openPalette: () => {},
+    closePalette: () => {},
+    togglePalette: () => {},
+  } as CommandPaletteContextValue;
 }
